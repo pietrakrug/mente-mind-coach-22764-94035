@@ -7,14 +7,17 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useToast } from '@/hooks/use-toast';
 import { Brain, Loader2 } from 'lucide-react';
+import { supabase } from '@/integrations/supabase/client';
 
 const Auth = () => {
   const [isLogin, setIsLogin] = useState(true);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [name, setName] = useState('');
+  const [fullName, setFullName] = useState('');
+  const [whatsapp, setWhatsapp] = useState('');
+  const [birthDate, setBirthDate] = useState('');
+  const [cpf, setCpf] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const { login, signup } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
 
@@ -24,33 +27,70 @@ const Auth = () => {
 
     try {
       if (isLogin) {
-        await login(email, password);
-        toast({
-          title: 'Welcome back!',
-          description: 'Successfully logged in.',
+        const { error } = await supabase.auth.signInWithPassword({
+          email,
+          password,
         });
+        
+        if (error) throw error;
+        
+        toast({
+          title: 'Bem-vindo de volta!',
+          description: 'Login realizado com sucesso.',
+        });
+        navigate('/dashboard');
       } else {
-        if (!name.trim()) {
+        // Validações
+        if (!fullName.trim() || !whatsapp.trim() || !birthDate || !cpf.trim()) {
           toast({
             variant: 'destructive',
-            title: 'Error',
-            description: 'Please enter your name.',
+            title: 'Erro',
+            description: 'Por favor, preencha todos os campos.',
           });
           setIsLoading(false);
           return;
         }
-        await signup(email, password, name);
-        toast({
-          title: 'Account created!',
-          description: 'Welcome to Mente Viva.',
+
+        // Criar usuário
+        const { data: authData, error: signUpError } = await supabase.auth.signUp({
+          email,
+          password,
+          options: {
+            emailRedirectTo: `${window.location.origin}/`,
+            data: {
+              full_name: fullName,
+            }
+          }
         });
+
+        if (signUpError) throw signUpError;
+        if (!authData.user) throw new Error('Erro ao criar usuário');
+
+        // Criar perfil
+        const { error: profileError } = await supabase
+          .from('profiles')
+          .insert({
+            id: authData.user.id,
+            full_name: fullName,
+            email: email,
+            whatsapp: whatsapp,
+            birth_date: birthDate,
+            cpf: cpf,
+          });
+
+        if (profileError) throw profileError;
+
+        toast({
+          title: 'Conta criada!',
+          description: 'Bem-vindo ao Mente Viva.',
+        });
+        navigate('/dashboard');
       }
-      navigate('/dashboard');
     } catch (error) {
       toast({
         variant: 'destructive',
-        title: 'Error',
-        description: error instanceof Error ? error.message : 'Authentication failed',
+        title: 'Erro',
+        description: error instanceof Error ? error.message : 'Falha na autenticação',
       });
     } finally {
       setIsLoading(false);
@@ -82,17 +122,55 @@ const Auth = () => {
           <CardContent>
             <form onSubmit={handleSubmit} className="space-y-4">
               {!isLogin && (
-                <div className="space-y-2">
-                  <Label htmlFor="name">Full Name</Label>
-                  <Input
-                    id="name"
-                    type="text"
-                    placeholder="John Doe"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    required={!isLogin}
-                  />
-                </div>
+                <>
+                  <div className="space-y-2">
+                    <Label htmlFor="fullName">Nome Completo</Label>
+                    <Input
+                      id="fullName"
+                      type="text"
+                      placeholder="João Silva"
+                      value={fullName}
+                      onChange={(e) => setFullName(e.target.value)}
+                      required={!isLogin}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="whatsapp">WhatsApp</Label>
+                    <Input
+                      id="whatsapp"
+                      type="tel"
+                      placeholder="(11) 99999-9999"
+                      value={whatsapp}
+                      onChange={(e) => setWhatsapp(e.target.value)}
+                      required={!isLogin}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="birthDate">Data de Nascimento</Label>
+                    <Input
+                      id="birthDate"
+                      type="date"
+                      value={birthDate}
+                      onChange={(e) => setBirthDate(e.target.value)}
+                      required={!isLogin}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="cpf">CPF</Label>
+                    <Input
+                      id="cpf"
+                      type="text"
+                      placeholder="000.000.000-00"
+                      value={cpf}
+                      onChange={(e) => setCpf(e.target.value)}
+                      required={!isLogin}
+                      maxLength={14}
+                    />
+                  </div>
+                </>
               )}
 
               <div className="space-y-2">
@@ -100,7 +178,7 @@ const Auth = () => {
                 <Input
                   id="email"
                   type="email"
-                  placeholder="you@example.com"
+                  placeholder="voce@exemplo.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   required
@@ -108,7 +186,7 @@ const Auth = () => {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="password">Password</Label>
+                <Label htmlFor="password">Senha</Label>
                 <Input
                   id="password"
                   type="password"
@@ -122,7 +200,7 @@ const Auth = () => {
 
               <Button type="submit" className="w-full" disabled={isLoading}>
                 {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                {isLogin ? 'Sign In' : 'Create Account'}
+                {isLogin ? 'Entrar' : 'Criar Conta'}
               </Button>
 
               <div className="text-center text-sm">
@@ -132,8 +210,8 @@ const Auth = () => {
                   className="text-primary hover:underline"
                 >
                   {isLogin
-                    ? "Don't have an account? Sign up"
-                    : 'Already have an account? Sign in'}
+                    ? 'Não tem uma conta? Cadastre-se'
+                    : 'Já tem uma conta? Entre'}
                 </button>
               </div>
             </form>

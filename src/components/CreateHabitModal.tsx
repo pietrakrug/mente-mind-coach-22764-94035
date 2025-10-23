@@ -6,8 +6,9 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
-import { habitApi } from '@/services/api';
+import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
+import { useHabitLimit } from '@/hooks/useHabitLimit';
 import { Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -38,9 +39,11 @@ const CreateHabitModal = ({ open, onOpenChange, onHabitCreated }: CreateHabitMod
   const [motivation, setMotivation] = useState('');
   const [selectedDays, setSelectedDays] = useState<number[]>([0, 1, 2, 3, 4, 5, 6]); // All days by default
   const [duration, setDuration] = useState('30');
+  const [reminderTime, setReminderTime] = useState('09:00');
   const [isLoading, setIsLoading] = useState(false);
   const { user } = useAuth();
   const { toast } = useToast();
+  const { canCreateNewHabit, activeHabitsCount, maxHabits, refreshCount } = useHabitLimit();
 
   const toggleDay = (dayId: number) => {
     setSelectedDays(prev => 
@@ -54,6 +57,15 @@ const CreateHabitModal = ({ open, onOpenChange, onHabitCreated }: CreateHabitMod
     e.preventDefault();
     if (!user) return;
 
+    if (!canCreateNewHabit) {
+      toast({
+        variant: 'destructive',
+        title: 'Limite Atingido',
+        description: `Você já tem ${maxHabits} hábitos ativos. Complete ou resete um hábito para criar um novo.`,
+      });
+      return;
+    }
+
     if (selectedDays.length === 0) {
       toast({
         variant: 'destructive',
@@ -65,31 +77,27 @@ const CreateHabitModal = ({ open, onOpenChange, onHabitCreated }: CreateHabitMod
 
     setIsLoading(true);
     try {
-      await habitApi.createHabit({
-        userId: user.id,
-        name,
-        motivation,
-        frequency: {
-          type: 'custom',
-          daysOfWeek: selectedDays,
-        },
-        duration: {
-          value: parseInt(duration),
-          unit: 'days',
-        },
-        reminders: {
-          enabled: false,
-          times: [],
-        },
-        startDate: new Date(),
-        isActive: true,
-      });
+      const { error } = await supabase
+        .from('habits')
+        .insert({
+          user_id: user.id,
+          name,
+          motivation,
+          days_of_week: selectedDays,
+          duration_days: parseInt(duration),
+          reminder_time: reminderTime,
+          start_date: new Date().toISOString().split('T')[0],
+          is_active: true,
+        });
+
+      if (error) throw error;
 
       toast({
         title: 'Hábito Criado!',
         description: 'Sua jornada começa agora. Vamos construir esse hábito juntos!',
       });
 
+      await refreshCount();
       onHabitCreated();
       onOpenChange(false);
       resetForm();
@@ -109,19 +117,39 @@ const CreateHabitModal = ({ open, onOpenChange, onHabitCreated }: CreateHabitMod
     setMotivation('');
     setSelectedDays([0, 1, 2, 3, 4, 5, 6]);
     setDuration('30');
+    setReminderTime('09:00');
   };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[550px] max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Crie Seu Hábito</DialogTitle>
+          <DialogTitle>
+            Crie Seu Hábito ({activeHabitsCount}/{maxHabits})
+          </DialogTitle>
           <DialogDescription>
-            Defina um hábito que você deseja construir. Seja específico e pense no porquê isso é importante para você.
+            {canCreateNewHabit 
+              ? 'Defina um hábito que você deseja construir. Seja específico e pense no porquê isso é importante para você.'
+              : `Você atingiu o limite de ${maxHabits} hábitos consecutivos. Complete ou resete um hábito existente para criar um novo.`
+            }
           </DialogDescription>
         </DialogHeader>
 
-        <form onSubmit={handleSubmit} className="space-y-4 mt-4">
+        {!canCreateNewHabit ? (
+          <div className="py-4 text-center">
+            <p className="text-muted-foreground">
+              Você já tem {maxHabits} hábitos ativos. Para criar um novo hábito, complete ou resete um dos hábitos existentes.
+            </p>
+            <Button 
+              variant="outline" 
+              onClick={() => onOpenChange(false)} 
+              className="mt-4"
+            >
+              Entendi
+            </Button>
+          </div>
+        ) : (
+          <form onSubmit={handleSubmit} className="space-y-4 mt-4">
           <div className="space-y-2">
             <Label htmlFor="name">Nome do Hábito *</Label>
             <Input
@@ -194,6 +222,20 @@ const CreateHabitModal = ({ open, onOpenChange, onHabitCreated }: CreateHabitMod
             </p>
           </div>
 
+          <div className="space-y-2">
+            <Label htmlFor="reminderTime">Horário do Lembrete *</Label>
+            <Input
+              id="reminderTime"
+              type="time"
+              value={reminderTime}
+              onChange={(e) => setReminderTime(e.target.value)}
+              required
+            />
+            <p className="text-xs text-muted-foreground">
+              Escolha o horário que você receberá lembretes via WhatsApp
+            </p>
+          </div>
+
           <div className="flex gap-3 pt-4">
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)} className="flex-1">
               Cancelar
@@ -204,6 +246,7 @@ const CreateHabitModal = ({ open, onOpenChange, onHabitCreated }: CreateHabitMod
             </Button>
           </div>
         </form>
+        )}
       </DialogContent>
     </Dialog>
   );

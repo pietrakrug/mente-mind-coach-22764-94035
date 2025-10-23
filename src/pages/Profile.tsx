@@ -1,11 +1,14 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';
 import { format } from 'date-fns';
-import { LogOut, User as UserIcon, Mail, Calendar, Trash2 } from 'lucide-react';
+import { LogOut, User as UserIcon, Mail, Calendar, Trash2, Phone, CreditCard, Edit2, Save, X } from 'lucide-react';
+import { supabase } from '@/integrations/supabase/client';
 import brain1 from '@/assets/avatars/brain-1.png';
 import brain2 from '@/assets/avatars/brain-2.png';
 import brain3 from '@/assets/avatars/brain-3.png';
@@ -43,11 +46,44 @@ const AVATARS = [
 ];
 
 const Profile = () => {
-  const { user, logout, updateProfile } = useAuth();
+  const { user, logout, updateProfile, refreshUser } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
   const [showResetDialog, setShowResetDialog] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [habitCount, setHabitCount] = useState(0);
+  
+  const [editForm, setEditForm] = useState({
+    full_name: '',
+    whatsapp: '',
+    birth_date: '',
+    cpf: '',
+  });
+
+  useEffect(() => {
+    if (user?.profile) {
+      setEditForm({
+        full_name: user.profile.full_name || '',
+        whatsapp: user.profile.whatsapp || '',
+        birth_date: user.profile.birth_date || '',
+        cpf: user.profile.cpf || '',
+      });
+    }
+    loadHabitCount();
+  }, [user]);
+
+  const loadHabitCount = async () => {
+    if (!user) return;
+    
+    const { data: habits } = await supabase
+      .from('habits')
+      .select('id')
+      .eq('user_id', user.id)
+      .eq('is_active', true);
+    
+    setHabitCount(habits?.length || 0);
+  };
 
   if (!user) return null;
 
@@ -57,30 +93,79 @@ const Profile = () => {
   };
 
   const handleAvatarSelect = async (avatarId: string) => {
-    await updateProfile({ avatar: avatarId });
-    toast({
-      title: 'Avatar Updated',
-      description: 'Your profile picture has been changed.',
-    });
+    try {
+      await updateProfile({ avatar: avatarId });
+      toast({
+        title: 'Avatar Atualizado',
+        description: 'Sua foto de perfil foi alterada.',
+      });
+    } catch (error) {
+      toast({
+        variant: 'destructive',
+        title: 'Erro',
+        description: 'Falha ao atualizar avatar.',
+      });
+    }
+  };
+
+  const handleSaveProfile = async () => {
+    try {
+      await updateProfile(editForm);
+      setIsEditing(false);
+      toast({
+        title: 'Perfil Atualizado',
+        description: 'Suas informações foram salvas com sucesso.',
+      });
+    } catch (error) {
+      toast({
+        variant: 'destructive',
+        title: 'Erro',
+        description: 'Falha ao atualizar perfil.',
+      });
+    }
+  };
+
+  const handleCancelEdit = () => {
+    if (user?.profile) {
+      setEditForm({
+        full_name: user.profile.full_name || '',
+        whatsapp: user.profile.whatsapp || '',
+        birth_date: user.profile.birth_date || '',
+        cpf: user.profile.cpf || '',
+      });
+    }
+    setIsEditing(false);
   };
 
   const handleResetHabit = async () => {
     setIsResetting(true);
     try {
-      const activeHabit = await habitApi.getActiveHabit(user.id);
-      if (activeHabit) {
-        await habitApi.deleteHabit(activeHabit.id);
+      const { data: activeHabits } = await supabase
+        .from('habits')
+        .select('id')
+        .eq('user_id', user.id)
+        .eq('is_active', true);
+
+      if (activeHabits && activeHabits.length > 0) {
+        for (const habit of activeHabits) {
+          await supabase
+            .from('habits')
+            .delete()
+            .eq('id', habit.id);
+        }
+        
         toast({
-          title: 'Habit Reset',
-          description: 'Your habit data has been cleared. Ready for a fresh start!',
+          title: 'Hábitos Resetados',
+          description: 'Seus dados de hábitos foram limpos. Pronto para um novo começo!',
         });
+        await loadHabitCount();
         navigate('/dashboard');
       }
     } catch (error) {
       toast({
         variant: 'destructive',
-        title: 'Error',
-        description: 'Failed to reset habit. Please try again.',
+        title: 'Erro',
+        description: 'Falha ao resetar hábitos. Tente novamente.',
       });
     } finally {
       setIsResetting(false);
@@ -88,42 +173,145 @@ const Profile = () => {
     }
   };
 
+  const profile = user.profile;
+  const selectedAvatar = AVATARS.find(a => a.id === profile?.avatar) || AVATARS[0];
+
   return (
     <div className="space-y-6 max-w-4xl animate-fade-in pb-20 md:pb-6">
       <div>
-        <h1 className="text-3xl font-bold">Profile</h1>
-        <p className="text-muted-foreground mt-1">Manage your account and preferences</p>
+        <h1 className="text-3xl font-bold">Perfil</h1>
+        <p className="text-muted-foreground mt-1">Gerencie sua conta e preferências</p>
       </div>
+
+      {habitCount >= 3 && (
+        <Card className="border-warning bg-warning/10">
+          <CardContent className="pt-6">
+            <p className="text-sm font-medium">
+              ⚠️ Você atingiu o limite de 3 hábitos consecutivos. Complete ou resete um hábito existente para criar um novo.
+            </p>
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader>
-          <CardTitle>Personal Information</CardTitle>
-          <CardDescription>Your account details</CardDescription>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle>Informações Pessoais</CardTitle>
+              <CardDescription>Seus dados cadastrais</CardDescription>
+            </div>
+            {!isEditing ? (
+              <Button variant="outline" size="sm" onClick={() => setIsEditing(true)} className="gap-2">
+                <Edit2 className="h-4 w-4" />
+                Editar
+              </Button>
+            ) : (
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" onClick={handleCancelEdit} className="gap-2">
+                  <X className="h-4 w-4" />
+                  Cancelar
+                </Button>
+                <Button size="sm" onClick={handleSaveProfile} className="gap-2">
+                  <Save className="h-4 w-4" />
+                  Salvar
+                </Button>
+              </div>
+            )}
+          </div>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="flex items-center gap-4 p-4 bg-muted/30 rounded-lg">
-            <UserIcon className="h-5 w-5 text-muted-foreground" />
-            <div>
-              <p className="text-sm text-muted-foreground">Name</p>
-              <p className="font-medium">{user.name}</p>
-            </div>
-          </div>
+          {isEditing ? (
+            <>
+              <div className="space-y-2">
+                <Label htmlFor="full_name">Nome Completo</Label>
+                <Input
+                  id="full_name"
+                  value={editForm.full_name}
+                  onChange={(e) => setEditForm({ ...editForm, full_name: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="whatsapp">WhatsApp</Label>
+                <Input
+                  id="whatsapp"
+                  value={editForm.whatsapp}
+                  onChange={(e) => setEditForm({ ...editForm, whatsapp: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="birth_date">Data de Nascimento</Label>
+                <Input
+                  id="birth_date"
+                  type="date"
+                  value={editForm.birth_date}
+                  onChange={(e) => setEditForm({ ...editForm, birth_date: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="cpf">CPF</Label>
+                <Input
+                  id="cpf"
+                  value={editForm.cpf}
+                  onChange={(e) => setEditForm({ ...editForm, cpf: e.target.value })}
+                  maxLength={14}
+                />
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="flex items-center gap-4 p-4 bg-muted/30 rounded-lg">
+                <UserIcon className="h-5 w-5 text-muted-foreground" />
+                <div>
+                  <p className="text-sm text-muted-foreground">Nome</p>
+                  <p className="font-medium">{profile?.full_name || 'Não informado'}</p>
+                </div>
+              </div>
 
-          <div className="flex items-center gap-4 p-4 bg-muted/30 rounded-lg">
-            <Mail className="h-5 w-5 text-muted-foreground" />
-            <div>
-              <p className="text-sm text-muted-foreground">Email</p>
-              <p className="font-medium">{user.email}</p>
-            </div>
-          </div>
+              <div className="flex items-center gap-4 p-4 bg-muted/30 rounded-lg">
+                <Mail className="h-5 w-5 text-muted-foreground" />
+                <div>
+                  <p className="text-sm text-muted-foreground">Email</p>
+                  <p className="font-medium">{user.email}</p>
+                </div>
+              </div>
 
-          <div className="flex items-center gap-4 p-4 bg-muted/30 rounded-lg">
-            <Calendar className="h-5 w-5 text-muted-foreground" />
-            <div>
-              <p className="text-sm text-muted-foreground">Member Since</p>
-              <p className="font-medium">{format(new Date(user.createdAt), 'MMMM d, yyyy')}</p>
-            </div>
-          </div>
+              <div className="flex items-center gap-4 p-4 bg-muted/30 rounded-lg">
+                <Phone className="h-5 w-5 text-muted-foreground" />
+                <div>
+                  <p className="text-sm text-muted-foreground">WhatsApp</p>
+                  <p className="font-medium">{profile?.whatsapp || 'Não informado'}</p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-4 p-4 bg-muted/30 rounded-lg">
+                <Calendar className="h-5 w-5 text-muted-foreground" />
+                <div>
+                  <p className="text-sm text-muted-foreground">Data de Nascimento</p>
+                  <p className="font-medium">
+                    {profile?.birth_date ? format(new Date(profile.birth_date), 'dd/MM/yyyy') : 'Não informado'}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-4 p-4 bg-muted/30 rounded-lg">
+                <CreditCard className="h-5 w-5 text-muted-foreground" />
+                <div>
+                  <p className="text-sm text-muted-foreground">CPF</p>
+                  <p className="font-medium">{profile?.cpf || 'Não informado'}</p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-4 p-4 bg-muted/30 rounded-lg">
+                <Calendar className="h-5 w-5 text-muted-foreground" />
+                <div>
+                  <p className="text-sm text-muted-foreground">Membro Desde</p>
+                  <p className="font-medium">
+                    {profile?.created_at ? format(new Date(profile.created_at), 'dd/MM/yyyy') : 'Não disponível'}
+                  </p>
+                </div>
+              </div>
+            </>
+          )}
         </CardContent>
       </Card>
 
@@ -139,7 +327,7 @@ const Profile = () => {
                 key={avatar.id}
                 onClick={() => handleAvatarSelect(avatar.id)}
                 className={`relative transition-all group ${
-                  user.avatar === avatar.id
+                  profile?.avatar === avatar.id
                     ? 'ring-4 ring-primary ring-offset-2 ring-offset-background scale-110'
                     : 'hover:scale-105 opacity-70 hover:opacity-100'
                 }`}
@@ -151,7 +339,7 @@ const Profile = () => {
                     {avatar.id}
                   </AvatarFallback>
                 </Avatar>
-                {user.avatar === avatar.id && (
+                {profile?.avatar === avatar.id && (
                   <div className="absolute -top-2 -right-2 w-6 h-6 bg-primary rounded-full flex items-center justify-center">
                     <svg className="w-4 h-4 text-primary-foreground" fill="currentColor" viewBox="0 0 20 20">
                       <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
@@ -166,20 +354,25 @@ const Profile = () => {
 
       <Card className="border-destructive/50">
         <CardHeader>
-          <CardTitle className="text-destructive">Danger Zone</CardTitle>
-          <CardDescription>Irreversible actions that affect your data</CardDescription>
+          <CardTitle className="text-destructive">Zona de Perigo</CardTitle>
+          <CardDescription>Ações irreversíveis que afetam seus dados</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex items-center justify-between p-4 bg-destructive/5 rounded-lg border border-destructive/20">
             <div>
-              <h3 className="font-semibold">Reset Current Habit</h3>
+              <h3 className="font-semibold">Resetar Hábitos Atuais ({habitCount}/3)</h3>
               <p className="text-sm text-muted-foreground">
-                This will delete all check-ins and habit data. You can create a new habit afterward.
+                Isso vai deletar todos os check-ins e dados de hábitos. Você pode criar novos hábitos depois.
               </p>
             </div>
-            <Button variant="destructive" onClick={() => setShowResetDialog(true)} className="gap-2">
+            <Button 
+              variant="destructive" 
+              onClick={() => setShowResetDialog(true)} 
+              className="gap-2"
+              disabled={habitCount === 0}
+            >
               <Trash2 className="h-4 w-4" />
-              Reset
+              Resetar
             </Button>
           </div>
         </CardContent>
@@ -189,7 +382,7 @@ const Profile = () => {
         <CardContent className="pt-6">
           <Button variant="outline" onClick={handleLogout} className="w-full gap-2">
             <LogOut className="h-4 w-4" />
-            Sign Out
+            Sair
           </Button>
         </CardContent>
       </Card>
@@ -197,16 +390,16 @@ const Profile = () => {
       <AlertDialog open={showResetDialog} onOpenChange={setShowResetDialog}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
+            <AlertDialogTitle>Tem certeza absoluta?</AlertDialogTitle>
             <AlertDialogDescription>
-              This action cannot be undone. This will permanently delete your current habit and all associated check-in data.
-              You will be able to create a new habit after this.
+              Esta ação não pode ser desfeita. Isso vai deletar permanentemente seus {habitCount} hábito(s) ativo(s) e todos os dados de check-in associados.
+              Você poderá criar novos hábitos depois.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
             <AlertDialogAction onClick={handleResetHabit} disabled={isResetting} className="bg-destructive hover:bg-destructive/90">
-              {isResetting ? 'Resetting...' : 'Yes, Reset My Habit'}
+              {isResetting ? 'Resetando...' : 'Sim, Resetar Meus Hábitos'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
